@@ -52,6 +52,11 @@ class UploadFile(db.Model):
     size = db.Column(db.Integer, nullable=False)
     content_type = db.Column(db.String(100), nullable=False)
     entity_type = db.Column(db.String(50), nullable=False, index=True)
+    # SHA-256 of the file's bytes — lets `/api/files/upload` recognize the
+    # same document re-selected later (by a different filename or from a
+    # different screen) and hand back the existing record instead of
+    # creating a second R2 object for identical content.
+    content_hash = db.Column(db.String(64), nullable=True, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

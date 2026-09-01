@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 
 from flask import app, Blueprint, jsonify, request
 
@@ -24,12 +25,38 @@ except OpenAIError:
         print("open ai key not found")
 
 
+def _serialize_content(content):
+    """`Message.content` is a plain Text column. A normal text message is
+    stored as-is; a message that also carries a file (a list of
+    OpenAI-style content parts) is stored as a JSON string, since a
+    Python list can't be bound directly to a Text column."""
+    if isinstance(content, str):
+        return content
+    return json.dumps(content)
+
+
+def _deserialize_content(raw):
+    """Reverses `_serialize_content`. Only attempts JSON-decoding values
+    that look like a JSON array/object, so an ordinary text message is
+    never misinterpreted (e.g. one that happens to just be the digit
+    "5", which is itself valid JSON)."""
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    if stripped.startswith("[") or stripped.startswith("{"):
+        try:
+            return json.loads(raw)
+        except (TypeError, ValueError):
+            return raw
+    return raw
+
+
 def message_to_dict(message):
     return {
         "id": message.id,
         "conversation_id": message.conversation_id,
         "role": message.role,
-        "content": message.content,
+        "content": _deserialize_content(message.content),
         "created_at": message.created_at.isoformat() + "Z",
     }
 
@@ -72,6 +99,7 @@ def chat():
             }), 400
 
         message = data.get("message")
+        file_url = data.get("file_url")
 
         conversation_id = data.get("conversation_id")
 
@@ -113,20 +141,40 @@ def chat():
         previous_messages = (Message.query.filter_by(conversation_id=conversation.id).order_by(Message.created_at.asc()).all())
 
 
-        # Build OpenAI conversation input.
+        # Build OpenAI conversation input from history — a past turn that
+        # attached a file was stored as a JSON-encoded content-parts list
+        # (see `_deserialize_content`), so it's passed through the same
+        # way here, not flattened back to plain text.
         conversation_history = []
 
         for previous_message in previous_messages:
 
             conversation_history.append({
                 "role": previous_message.role,
-                "content": previous_message.content,
+                "content": _deserialize_content(previous_message.content),
             })
 
-        # Add the new user message.
+        # Build the new user turn's input: plain text normally, or a
+        # multimodal content-parts list (text + the R2 document) when a
+        # file is attached, so the model actually receives the document
+        # rather than just being told about it.
+        if file_url:
+            user_content = [
+                {
+                    "type": "input_text",
+                    "text": f"{message}",
+                },
+                {
+                    "type": "input_file",
+                    "file_url": f"{file_url}",
+                },
+            ]
+        else:
+            user_content = message
+
         conversation_history.append({
             "role": "user",
-            "content": message,
+            "content": user_content,
         })
 
         # Load system prompt.
@@ -148,11 +196,12 @@ def chat():
                 "error": "The AI returned an empty response."
             }), 500
 
-        # Save user message.
+        # Save the user's message (with its file reference, if any) and
+        # the assistant's reply.
         user_message = Message(
             conversation_id=conversation.id,
             role="user",
-            content=message,
+            content=_serialize_content(user_content),
         )
 
         db.session.add(user_message)

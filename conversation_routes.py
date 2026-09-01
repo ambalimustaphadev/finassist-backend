@@ -1,4 +1,6 @@
 from datetime import datetime
+import json
+
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
@@ -18,12 +20,27 @@ def conversation_to_dict(conversation):
     }
 
 
+def _deserialize_content(raw):
+    """Mirrors `chat_routes._deserialize_content` — a message that
+    attached a file is stored as a JSON-encoded content-parts list;
+    everything else is stored (and returned) as plain text."""
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    if stripped.startswith("[") or stripped.startswith("{"):
+        try:
+            return json.loads(raw)
+        except (TypeError, ValueError):
+            return raw
+    return raw
+
+
 def message_to_dict(message):
     return {
         "id": message.id,
         "conversation_id": message.conversation_id,
         "role": message.role,
-        "content": message.content,
+        "content": _deserialize_content(message.content),
         "created_at": message.created_at.isoformat() + "Z",
     }
 

@@ -24,6 +24,5 @@ class Config(object):
 
     OPEN_AI_KEY = os.environ.get("OPEN_AI_KEY")
 
-
 # cloudflare url
-DEVELOPMENT_URL = "https://pub-a01ec6ddbcee4e00818c122528614dbd.r2.dev"
+    DEVELOPMENT_URL = "https://pub-a01ec6ddbcee4e00818c122528614dbd.r2.dev"
