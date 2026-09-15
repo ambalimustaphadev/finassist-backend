@@ -21,9 +21,7 @@ def conversation_to_dict(conversation):
 
 
 def _deserialize_content(raw):
-    """Mirrors `chat_routes._deserialize_content` — a message that
-    attached a file is stored as a JSON-encoded content-parts list;
-    everything else is stored (and returned) as plain text."""
+
     if raw is None:
         return None
     stripped = raw.strip()

@@ -1,6 +1,10 @@
 from datetime import timedelta
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 class Config(object):
     # Database
@@ -15,14 +19,14 @@ class Config(object):
 
 
 # cloudflare R2
+    # The bucket is private. Public r2.dev access is disabled; all
+    # client-facing access to objects in it goes through short-lived
+    # presigned URLs (see spaces.generate_signed_url), never a public URL.
     CLOUDFLARE_ACCOUNT_ID = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
     R2_ACCESS_KEY_ID = os.environ.get("CLOUDFLARE_ACCESS_KEY")
     R2_SECRET_ACCESS_KEY = os.environ.get("CLOUDFLARE_SECRET_ACCESS_KEY")
-    R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME")   
+    R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME")
 
 # open ai ai key
 
     OPEN_AI_KEY = os.environ.get("OPEN_AI_KEY")
-
-# cloudflare url
-    DEVELOPMENT_URL = "https://pub-a01ec6ddbcee4e00818c122528614dbd.r2.dev"
