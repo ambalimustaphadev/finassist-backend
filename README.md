@@ -27,6 +27,11 @@ reading whatever the user uploads or types, not by app-managed financial records
 - Real application activity history (document activity, profile/preference changes, and
   client-logged calculator usage)
 - Notifications
+- Subscription tracking (recurring costs the user logs manually)
+- Tools: seven deterministic financial calculators (currency conversion, loan, savings,
+  affordability, debt payoff, investment growth, subscription cost totals), computed
+  server-side with `Decimal` precision; a result can be handed to AI chat for explanation
+  via an optional `tool_context` on `POST /api/chat`, without the AI recalculating it
 
 ## Project Structure
 
@@ -34,14 +39,18 @@ reading whatever the user uploads or types, not by app-managed financial records
 authroute/            Authentication routes
 migrations/           Database migrations
 server/               Flask application factory
-services/             Business logic for profile/preferences/activity/notifications
-chat_routes.py        AI chat routes (protected — see below)
+services/             Business logic for profile/preferences/activity/notifications/subscriptions
+services/tools/       Deterministic Tools calculators (routes -> service -> calculator/provider)
+chat_routes.py        AI chat routes, including the tool_context handoff — see below
 conversation_routes.py
 file_routes.py        Document upload/list/get/delete routes
 profile_routes.py
 preference_routes.py
 activity_routes.py
 notification_routes.py
+subscription_routes.py
+tools_routes.py       Tools API routes (currency, loan, savings, affordability, debt
+                       payoff, investment, subscription cost)
 models.py             Database models
 utils.py              Shared validation/error/pagination helpers for the routes above
 spaces.py             Cloudflare R2 client
@@ -49,10 +58,12 @@ config.py             Application configuration
 tests/                Pytest suite (runs against an in-memory database only)
 ```
 
-`chat_routes.py`, `conversation_routes.py`, the OpenAI integration, `SYSTEM.MD`, and the
-document-attachment flow are intentionally left alone in this phase. Everything else
-(profile, preferences, activity, notifications) is normal, deterministic backend logic
-with no AI involved.
+`conversation_routes.py`, the OpenAI integration, and the document-attachment flow are
+unchanged. `chat_routes.py` and `SYSTEM.MD` gained one additive extension: an optional
+`tool_context` on `POST /api/chat` that hands a Tools calculation to the AI to explain,
+without ever asking it to recalculate — everything else about chat is as before. All
+calculation itself (profile, preferences, activity, notifications, subscriptions, tools)
+is normal, deterministic backend logic with no AI involved.
 
 FinAssist previously included a financial dashboard, a manual goal tracker, and a
 transaction ledger. Those have been removed: the product is AI-first chat, and financial
@@ -153,7 +164,32 @@ returned to the client. The client references a document only by `id` (`file_id`
 backend resolves that to a short-lived signed URL on demand, either for `GET
 /api/files/<id>/view` or when attaching the file to a chat message.
 
-### Conversations & Chat (protected — unchanged in this phase)
+### Subscriptions
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/subscriptions` | Ordered by `next_billing_date` |
+| POST | `/api/subscriptions` | `name, amount, currency, frequency, next_billing_date` required; `category, payment_method, website, notes` optional |
+| GET | `/api/subscriptions/<id>` | |
+| PATCH | `/api/subscriptions/<id>` | Any subset of the create fields, plus `status` (`active, paused, cancelled`) |
+| DELETE | `/api/subscriptions/<id>` | |
+
+### Tools
+
+Seven deterministic calculators — see `DOCUMENT.md`'s Tools API section for full request/response contracts. Every response shares one envelope: `{"tool", "version", "inputs", "result", "metadata"}`. Money is `Decimal`-precise throughout and rendered as strings, never JSON floats.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/tools/currency/currencies` | Backend-owned currency list (code + name) |
+| POST | `/api/tools/currency/convert` | `amount, from_currency, to_currency`. Same-currency short-circuits the exchange rate provider. Rates come from Frankfurter (keyless) behind a `CurrencyRateProvider` interface (`services/tools/currency/providers/`), swappable without touching this contract. |
+| POST | `/api/tools/loan/calculate` | `loan_amount, annual_interest_rate, duration, duration_unit, repayment_frequency, currency` — standard amortizing loan |
+| POST | `/api/tools/savings/calculate` | Exactly one of `target_amount` / `monthly_contribution`, plus `duration_months`, optional `annual_return_rate` |
+| POST | `/api/tools/affordability/calculate` | `monthly_income, existing_commitments, purchase_price, payment_method (cash\|installment), duration_months?, currency` |
+| POST | `/api/tools/debt-payoff/calculate` | `current_debt, annual_interest_rate, minimum_monthly_payment, extra_monthly_payment?, currency`. Rejects a payment that can't cover the debt's interest (`DEBT_PAYMENT_TOO_LOW`). |
+| POST | `/api/tools/investment/calculate` | `initial_amount, monthly_contribution?, expected_annual_return, duration_years, compounding_frequency, currency` |
+| POST | `/api/tools/subscription-cost/calculate` | Optional `subscription_ids`; defaults to all of the caller's `active` subscriptions. Uses stored `Subscription` amounts only — never a client-supplied amount. Ownership-checked (404 on another user's id). |
+
+### Conversations & Chat
 
 | Method | Path | Notes |
 |---|---|---|
@@ -161,7 +197,7 @@ backend resolves that to a short-lived signed URL on demand, either for `GET
 | POST | `/api/conversations` | |
 | GET | `/api/conversations/<id>` | Includes full message history |
 | DELETE | `/api/conversations/<id>` | |
-| POST | `/api/chat` | `message, conversation_id, file_id?` → OpenAI response. `file_id` must belong to the authenticated user; the backend resolves it to a fresh signed URL internally and never accepts a client-supplied file URL. |
+| POST | `/api/chat` | `message, conversation_id, file_id?, tool_context?` → OpenAI response. `file_id` must belong to the authenticated user; the backend resolves it to a fresh signed URL internally and never accepts a client-supplied file URL. `tool_context` is an optional Tools result (`{"type": "financial_tool_result", "tool", "version", "inputs", "result", "metadata"}`) the AI explains but never recalculates; `message` may be empty when `tool_context` (or `file_id`) is present. |
 
 ### Error format
 

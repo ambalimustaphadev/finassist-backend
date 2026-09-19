@@ -30,3 +30,9 @@ class Config(object):
 # open ai ai key
 
     OPEN_AI_KEY = os.environ.get("OPEN_AI_KEY")
+
+# Tools — currency provider
+    # Frankfurter needs no API key. Isolated here so a future provider
+    # (e.g. one that does need a key) only touches config + the provider
+    # implementation, never CurrencyService or the routes.
+    FRANKFURTER_BASE_URL = os.environ.get("FRANKFURTER_BASE_URL", "https://api.frankfurter.dev/v2")

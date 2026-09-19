@@ -38,7 +38,7 @@ Authentication, Conversations, Chat, and most of the Financial Files API return 
 }
 ```
 
-Profile, Preferences, Activity, Notifications, and file-upload validation errors return a structured shape:
+Profile, Preferences, Activity, Notifications, Subscriptions, Tools, and file-upload validation errors return a structured shape:
 
 ```json
 {
@@ -831,6 +831,8 @@ Required.
 | `description` | No | Free text. |
 | `metadata` | No | Arbitrary JSON, stored as-is. |
 
+Note: the four client-loggable calculator types predate the [Tools API](#tools-api), from when those calculators ran entirely in the app. They still compute server-side now, so this endpoint is no longer their only record of use — it remains available and unchanged for the client to log its own local usage if it wants to, but is not required by the Tools flow.
+
 **Success**
 
 `201` with the created activity object.
@@ -842,6 +844,279 @@ Required.
 | 400 | `type` is missing or not in the client-loggable set, or `title` is missing/empty/too long (structured error). |
 
 ---
+
+## Tools API
+
+Seven deterministic financial calculators. Every calculation happens in Flask, using `Decimal` arithmetic — the AI never performs or repeats these calculations itself; it only explains a result already computed here (see [AI and Document Flow](#ai-and-document-flow)).
+
+All monetary and rate figures in requests and responses are decimal strings (for example `"91679.99"`), never JSON floats, so precision is never lost to a binary float round-trip. Every successful response shares one envelope:
+
+```json
+{
+  "tool": "<tool_identifier>",
+  "version": "1",
+  "inputs": { "...": "the validated, normalized request" },
+  "result": { "...": "the calculation output" },
+  "metadata": { "calculated_at": "2026-09-18T12:00:00.000000Z", "...": "tool-specific notes" }
+}
+```
+
+`version` lets old calculations stay interpretable if a formula changes later. This same envelope (with `type: "financial_tool_result"` added) is what the chat `tool_context` handoff sends to the AI — see below.
+
+Validation errors always use the structured shape (`code: "VALIDATION_ERROR"`, with a tool-specific code such as `INVALID_AMOUNT`, `INVALID_CURRENCY`, `INVALID_INTEREST_RATE`, `INVALID_DURATION`, `INVALID_FREQUENCY`, or `INVALID_PAYMENT` inside `error.details.<field>`). Errors specific to one tool are listed under it below.
+
+### GET `/api/tools/currency/currencies`
+
+Returns the backend's supported currency list — the source of truth for currency metadata; Flutter should not maintain its own copy.
+
+**Authentication:** Required.
+
+**Success `200`**
+
+```json
+{ "currencies": [{ "code": "USD", "name": "United States Dollar" }, { "code": "NGN", "name": "Nigerian Naira" }] }
+```
+
+### POST `/api/tools/currency/convert`
+
+**Request**
+
+```json
+{ "amount": "1000.00", "from_currency": "USD", "to_currency": "NGN" }
+```
+
+Currency codes are case-insensitive and normalized to uppercase. If `from_currency` equals `to_currency`, the rate is `1` and no external provider call is made.
+
+**Success `200`**
+
+```json
+{
+  "tool": "currency_converter",
+  "version": "1",
+  "inputs": { "amount": "1000.00", "from_currency": "USD", "to_currency": "NGN" },
+  "result": { "rate": "1546.500000", "converted_amount": "1546500.00" },
+  "metadata": { "calculated_at": "...", "rate_date": "2026-09-17", "source": "frankfurter" }
+}
+```
+
+`source` is `"same_currency"` (and `rate_date` is `null`) when no conversion was needed.
+
+**Possible errors**
+
+| Status | Code | Meaning |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | Invalid/missing `amount`, or `from_currency`/`to_currency` not a supported code. |
+| 502 | `CURRENCY_PROVIDER_UNAVAILABLE` | The exchange rate provider timed out, was unreachable, or returned an invalid/malformed response. |
+
+**Provider architecture:** conversions go through a `CurrencyRateProvider` interface (`services/tools/currency/providers/base.py`); the current implementation, `FrankfurterProvider` (`services/tools/currency/providers/frankfurter.py`), calls the free, keyless Frankfurter API (base URL configurable via `FRANKFURTER_BASE_URL`, defaults to `https://api.frankfurter.dev/v2`). `CurrencyService` and this endpoint depend only on the interface, so a future provider can replace Frankfurter without changing this contract.
+
+### POST `/api/tools/loan/calculate`
+
+Standard fixed-payment amortizing loan.
+
+**Request**
+
+```json
+{
+  "loan_amount": "1000000",
+  "annual_interest_rate": "18",
+  "duration": 12,
+  "duration_unit": "months",
+  "repayment_frequency": "monthly",
+  "currency": "NGN"
+}
+```
+
+`duration_unit`: `months` or `years`. `repayment_frequency`: `weekly`, `biweekly`, `monthly`, or `quarterly`. A `0` interest rate is valid (payments split the principal evenly).
+
+**Success `200` — `result`**
+
+```json
+{ "periodic_payment": "91679.99", "total_repayment": "1100159.91", "total_interest": "100159.91", "number_of_payments": 12 }
+```
+
+`metadata.is_estimate` is always `true`; `metadata.assumptions` states this is not a lender quote.
+
+### POST `/api/tools/savings/calculate`
+
+Supply exactly one of `target_amount` or `monthly_contribution` (not both, not neither).
+
+**Request**
+
+```json
+{ "target_amount": "500000", "duration_months": 12, "annual_return_rate": "5", "currency": "NGN" }
+```
+
+`annual_return_rate` is optional; if omitted, no growth is assumed (`0`).
+
+**Success `200` — `result`**
+
+```json
+{
+  "required_monthly_contribution": "40720.41",
+  "projected_amount": "500000.00",
+  "total_contributions": "488644.89",
+  "estimated_growth": "11355.11"
+}
+```
+
+`metadata.mode` is `"target_based"` or `"contribution_based"` depending on which input was supplied.
+
+### POST `/api/tools/affordability/calculate`
+
+**Request**
+
+```json
+{
+  "monthly_income": "500000",
+  "existing_commitments": "150000",
+  "purchase_price": "2000000",
+  "payment_method": "installment",
+  "duration_months": 12,
+  "currency": "NGN"
+}
+```
+
+`payment_method`: `cash` (no recurring payment; `duration_months` not required) or `installment` (price split evenly across `duration_months`, no interest modeled; `duration_months` required).
+
+**Success `200` — `result`**
+
+```json
+{
+  "estimated_monthly_payment": "166666.67",
+  "total_monthly_commitments": "316666.67",
+  "commitment_ratio": "0.6333",
+  "remaining_income": "183333.33"
+}
+```
+
+`commitment_ratio` is a fraction of monthly income (not a percentage). `metadata.within_threshold` compares it against `metadata.commitment_ratio_threshold` (currently `0.40`) — a configurable guideline surfaced for context, not an absolute affordability verdict.
+
+### POST `/api/tools/debt-payoff/calculate`
+
+**Request**
+
+```json
+{
+  "current_debt": "1500000",
+  "annual_interest_rate": "20",
+  "minimum_monthly_payment": "50000",
+  "extra_monthly_payment": "50000",
+  "currency": "NGN"
+}
+```
+
+`extra_monthly_payment` is optional, defaults to `0`.
+
+**Success `200` — `result`**
+
+```json
+{
+  "months_to_payoff": 18,
+  "total_interest": "240636.07",
+  "total_repayment": "1740636.07",
+  "minimum_only": { "payable": true, "months_to_payoff": 42, "total_interest": "596747.73", "total_repayment": "..." },
+  "interest_saved": "356111.66",
+  "months_saved": 24
+}
+```
+
+`minimum_only` simulates paying only `minimum_monthly_payment` (ignoring the extra amount) for comparison. If that alone wouldn't cover the monthly interest, `minimum_only.payable` is `false`, its other fields are `null`, and so are `interest_saved`/`months_saved`.
+
+**Possible errors**
+
+| Status | Code | Meaning |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` (`details.minimum_monthly_payment: "DEBT_PAYMENT_TOO_LOW"`) | `minimum_monthly_payment + extra_monthly_payment` does not exceed the first month's interest, so the debt could never be paid off. |
+
+### POST `/api/tools/investment/calculate`
+
+**Request**
+
+```json
+{
+  "initial_amount": "500000",
+  "monthly_contribution": "100000",
+  "expected_annual_return": "12",
+  "duration_years": 10,
+  "compounding_frequency": "monthly",
+  "currency": "NGN"
+}
+```
+
+`monthly_contribution` is optional, defaults to `0`. `compounding_frequency`: `monthly`, `quarterly`, or `annually`.
+
+**Success `200` — `result`**
+
+```json
+{
+  "future_value": "24654062.39",
+  "total_contributions": "12500000.00",
+  "estimated_growth": "12154062.39",
+  "initial_amount": "500000.00",
+  "contribution_amount": "100000.00"
+}
+```
+
+`metadata.assumptions` states returns are not guaranteed and this is not investment advice.
+
+### POST `/api/tools/subscription-cost/calculate`
+
+Computes totals from the caller's own tracked subscriptions (`Subscription` rows created via the [Subscriptions](#endpoint-summary) endpoints) — it never accepts a client-supplied amount for an existing subscription.
+
+**Request**
+
+```json
+{ "subscription_ids": [1, 2, 3] }
+```
+
+`subscription_ids` is optional. If omitted, all of the caller's `active` subscriptions are used. If supplied, every id must belong to the caller (see errors below); paused/cancelled subscriptions among the supplied ids are excluded from totals and listed in `result.excluded_subscriptions`.
+
+**Success `200` — `result`**
+
+```json
+{
+  "currency": "NGN",
+  "total_monthly_cost": "41333.33",
+  "total_yearly_cost": "496000.00",
+  "subscription_count": 4,
+  "subscriptions": [
+    { "id": 1, "name": "Netflix", "amount": "7000.00", "currency": "NGN", "frequency": "monthly", "monthly_cost": "7000.00", "yearly_cost": "84000.00" }
+  ],
+  "totals_by_currency": [{ "currency": "NGN", "total_monthly_cost": "41333.33", "total_yearly_cost": "496000.00" }],
+  "excluded_subscriptions": []
+}
+```
+
+Billing frequencies (`weekly`, `monthly`, `quarterly`, `semiannual`, `yearly`) are normalized to monthly/yearly equivalents (weekly ×52/12, quarterly ÷3, semiannual ÷6, yearly ÷12). If the included subscriptions span more than one currency, `currency`/`total_monthly_cost`/`total_yearly_cost` are `null` and `totals_by_currency` holds the per-currency breakdown instead — amounts in different currencies are never added together.
+
+**Possible errors**
+
+| Status | Code | Meaning |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` (`details.subscription_ids: "INVALID_SUBSCRIPTION_ID"`) | `subscription_ids` is not a non-empty array of positive integers. |
+| 404 | `SUBSCRIPTION_NOT_FOUND` (`details.subscription_ids`: the missing ids) | One or more requested ids don't exist, or belong to a different user — both cases return the same response, consistent with the rest of the API never confirming another user's resource exists. |
+
+### Chat tool_context handoff
+
+`POST /api/chat` accepts an optional `tool_context` field alongside `message`/`conversation_id`/`file_id`: the exact envelope one of the endpoints above returned, with `"type": "financial_tool_result"` added. The user can send it with a typed question, or with an empty `message` — the app never sends a synthetic message on the user's behalf.
+
+```json
+{
+  "message": "Is this affordable for me?",
+  "conversation_id": 12,
+  "tool_context": {
+    "type": "financial_tool_result",
+    "tool": "affordability_calculator",
+    "version": "1",
+    "inputs": { "...": "..." },
+    "result": { "...": "..." },
+    "metadata": { "...": "..." }
+  }
+}
+```
+
+The AI treats `tool_context.result` as authoritative and does not recalculate it (see [AI and Document Flow](#ai-and-document-flow) and `SYSTEM.MD`'s "TOOL RESULTS" section). Like a file attachment, the full `tool_context` is only sent to the model on the turn it's attached; later turns see a short placeholder instead of the raw JSON. A malformed `tool_context` (missing `type`/`tool`/`version`/`inputs`/`result`, wrong `type`, or over 20 KB) returns `400 {"error": "..."}`, matching the rest of the Chat API's error shape.
 
 ## Notifications API
 
@@ -930,13 +1205,15 @@ Financial documents and profile pictures are stored as private objects in a sing
 
 Chat runs on the OpenAI Responses API using the model `gpt-5.6-luna`. Each `POST /api/chat` call sends the system prompt from `SYSTEM.MD`, the most recent 20 messages of the conversation, and the current turn's message.
 
-A financial document is only ever sent to the model in the turn where it is actually attached. Once that turn scrolls out of the live conversation or a later turn is processed, the document is not resent — its place in the historical context is a short placeholder noting a document was attached there, not the document itself. This bounds both the number of documents reprocessed per request and the token cost of long conversations.
+A financial document is only ever sent to the model in the turn where it is actually attached. Once that turn scrolls out of the live conversation or a later turn is processed, the document is not resent — its place in the historical context is a short placeholder noting a document was attached there, not the document itself. This bounds both the number of documents reprocessed per request and the token cost of long conversations. A `tool_context` (see [Tools API](#tools-api)) follows the same rule: sent in full only on the turn it's attached, replaced by a short placeholder afterward.
 
-There is no web search, function calling, tool calling, autonomous task execution, or persistent memory across conversations. The assistant's knowledge of a conversation is limited to what is in that conversation's recent message window.
+Tool results are never computed by the model. The seven Tools endpoints perform their calculations deterministically in Flask before the user ever reaches chat; if the user taps "Ask FinAssist" on a result, that structured result — not a recalculation — is what the model reasons about. `SYSTEM.MD`'s "TOOL RESULTS" section instructs the model accordingly.
+
+There is no web search, autonomous task execution, or persistent memory across conversations beyond the `tool_context` handoff described above. The Tools endpoints are conventional, directly-called Flask routes, not AI function/tool calling — the assistant does not invoke them itself. The assistant's knowledge of a conversation is limited to what is in that conversation's recent message window.
 
 ## Current Product Scope
 
-FinAssist's current product surface is chat-first: Chat, Quick (activity/preferences-driven shortcuts), Tools (client-side calculators that log activity via `POST /api/activity`), and Profile. It is not a transaction-tracking or dashboard-style finance app.
+FinAssist's current product surface is chat-first: Chat, Quick (activity/preferences-driven shortcuts), Tools (seven deterministic calculators computed server-side — see [Tools API](#tools-api) — with results optionally handed to chat via `tool_context`), Subscriptions, and Profile. It is not a transaction-tracking or dashboard-style finance app.
 
 Manual financial-goal tracking and transaction-ledger tracking existed earlier in this backend's history but have been removed. Migration `d1adc99c11a8_remove_legacy_goal_transaction_tracking.py` dropped the `financial_goal` and `transaction` tables and their related `user_preference` columns. There are no `/api/goals`, `/api/transactions`, or `/api/dashboard` endpoints in the current backend, and none of the active route files reference them. Any historical mentions of these features found elsewhere in the repository describe removed functionality, not current behavior.
 
@@ -971,8 +1248,21 @@ Manual financial-goal tracking and transaction-ledger tracking existed earlier i
 | GET | `/api/notifications` | Required | List the caller's notifications |
 | PATCH | `/api/notifications/<notification_id>` | Required | Mark one notification as read |
 | PATCH | `/api/notifications/read-all` | Required | Mark all notifications as read |
+| GET | `/api/subscriptions` | Required | List the caller's tracked subscriptions |
+| POST | `/api/subscriptions` | Required | Create a tracked subscription |
+| GET | `/api/subscriptions/<subscription_id>` | Required | Get one subscription |
+| PATCH | `/api/subscriptions/<subscription_id>` | Required | Update one subscription |
+| DELETE | `/api/subscriptions/<subscription_id>` | Required | Delete one subscription |
+| GET | `/api/tools/currency/currencies` | Required | List supported currencies |
+| POST | `/api/tools/currency/convert` | Required | Convert an amount between two currencies |
+| POST | `/api/tools/loan/calculate` | Required | Calculate an amortizing loan |
+| POST | `/api/tools/savings/calculate` | Required | Calculate a savings plan |
+| POST | `/api/tools/affordability/calculate` | Required | Calculate purchase affordability |
+| POST | `/api/tools/debt-payoff/calculate` | Required | Calculate a debt payoff plan |
+| POST | `/api/tools/investment/calculate` | Required | Calculate investment growth |
+| POST | `/api/tools/subscription-cost/calculate` | Required | Total the caller's tracked subscription costs |
 
-25 active endpoints across 8 blueprints (`auth`, `chat`, `conversations`, `files`, `profile`, `preferences`, `activity`, `notifications`).
+38 active endpoints across 10 blueprints (`auth`, `chat`, `conversations`, `files`, `profile`, `preferences`, `activity`, `notifications`, `subscriptions`, `tools`).
 
 ## Development Status
 

@@ -15,6 +15,7 @@ dependencies = [
     "flask-sqlalchemy>=3.1.1",
     "openai>=3.2.0",
     "python-dotenv>=1.2.3",
+    "requests>=2.34.2",
     "werkzeug>=3.1.8",
 ]
 

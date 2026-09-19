@@ -38,6 +38,68 @@ FILE_ONLY_GUIDANCE = (
     "rather than guessing."
 )
 
+# A "tool_context" is a normalized result already computed by one of
+# FinAssist's deterministic Tools calculators (see tools_routes.py /
+# services/tools/*), attached when the user taps "Ask FinAssist" on a
+# result card. See SYSTEM.MD's "TOOL RESULTS" section for the standing
+# policy; this is the per-request reinforcement plus the guidance for
+# the specific case where no question was typed.
+TOOL_CONTEXT_TYPE = "financial_tool_result"
+MAX_TOOL_CONTEXT_BYTES = 20_000
+
+TOOL_CONTEXT_GUIDANCE = (
+    "The message below includes a tool_context: a structured result "
+    "already computed by FinAssist's deterministic Tools system, not by "
+    "you. Treat its `result` values as authoritative — do not "
+    "recalculate them, do not change any number in them, and do not "
+    "imply you personally performed the calculation. You may explain "
+    "it, interpret it, and answer follow-up questions using it; clearly "
+    "label anything in `metadata` marked as an estimate or assumption "
+    "as such rather than as fact. Only perform new calculations if the "
+    "user asks for something beyond what tool_context already contains, "
+    "and say clearly when you do."
+)
+
+TOOL_CONTEXT_ONLY_GUIDANCE = (
+    "The user attached this tool_context without typing a question. "
+    "Give a concise, useful explanation of the result — what it means "
+    "and anything worth noting about its assumptions — rather than "
+    "asking what they want to know."
+)
+
+
+def _validate_tool_context(value):
+    """Returns the cleaned tool_context dict, or None if not supplied.
+    Raises ValueError with a user-facing message on malformed input."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("tool_context must be an object.")
+    if value.get("type") != TOOL_CONTEXT_TYPE:
+        raise ValueError(f"tool_context.type must be '{TOOL_CONTEXT_TYPE}'.")
+    if not isinstance(value.get("tool"), str) or not value["tool"].strip():
+        raise ValueError("tool_context.tool is required.")
+    if not isinstance(value.get("version"), str) or not value["version"].strip():
+        raise ValueError("tool_context.version is required.")
+    if not isinstance(value.get("inputs"), dict):
+        raise ValueError("tool_context.inputs must be an object.")
+    if not isinstance(value.get("result"), dict):
+        raise ValueError("tool_context.result must be an object.")
+    metadata = value.get("metadata")
+    if metadata is not None and not isinstance(metadata, dict):
+        raise ValueError("tool_context.metadata must be an object.")
+    try:
+        size = len(json.dumps(value))
+    except (TypeError, ValueError):
+        raise ValueError("tool_context is not serializable.")
+    if size > MAX_TOOL_CONTEXT_BYTES:
+        raise ValueError("tool_context is too large.")
+    return value
+
+
+def _format_tool_context_block(tool_context):
+    return f"{TOOL_CONTEXT_GUIDANCE}\n\n{json.dumps(tool_context)}"
+
 
 def get_openai_client():
     """ The OpenAI client for this request.
@@ -109,26 +171,38 @@ def _parse_positive_id(value):
 
 def _reconstruct_message_content(raw_content):
     """
-    Only the CURRENT turn's file (resolved separately in chat()) is ever
-    attached to the OpenAI request. A historical attachment is not
-    re-resolved, re-signed, or re-sent on every later turn: doing so
-    would reprocess the same document (and its input-token cost) on
-    every single message of a conversation. It's kept as a lightweight
-    text reference instead, so the model still knows a document was
-    involved at that point without paying to re-read it, and without
-    exposing the internal database file_id to the model. The stored
-    message itself still keeps the real file_id, so a future "compare
-    with the previous statement" feature can selectively re-attach a
-    specific historical file by id.
+    Only the CURRENT turn's file/tool_context (resolved separately in
+    chat()) is ever attached to the OpenAI request. A historical
+    attachment is not re-resolved, re-signed, or re-sent on every later
+    turn: doing so would reprocess the same document (and its
+    input-token cost) on every single message of a conversation. It's
+    kept as a lightweight text reference instead, so the model still
+    knows an attachment was involved at that point without paying to
+    re-read it, and without exposing the internal database file_id to
+    the model. The stored message itself still keeps the real file_id
+    (or tool_context), so a future "compare with the previous
+    statement" feature can selectively re-attach a specific historical
+    item.
     """
     deserialized = _deserialize_content(raw_content)
 
-    if isinstance(deserialized, dict) and "file_id" in deserialized:
+    if isinstance(deserialized, dict) and ("file_id" in deserialized or "tool_context" in deserialized):
         text = deserialized.get("text") or ""
-        note = (
-            "[The user previously attached a document here. The "
-            "document is not included in the current context window.]"
-        )
+        notes = []
+        if "file_id" in deserialized:
+            notes.append(
+                "[The user previously attached a document here. The "
+                "document is not included in the current context window.]"
+            )
+        if "tool_context" in deserialized:
+            tool_name = (deserialized.get("tool_context") or {}).get("tool", "a financial tool")
+            notes.append(
+                f"[The user previously shared a {tool_name} result here. "
+                "The full structured data is not repeated in this "
+                "context window; refer to your earlier reply for the "
+                "figures.]"
+            )
+        note = " ".join(notes)
         content = f"{text}\n\n{note}" if text else note
         return content, True
 
@@ -156,12 +230,14 @@ def message_to_dict(message):
     }
 
 
-def generate_title(message, has_attachment):
+def generate_title(message, has_attachment, tool_name=None):
     """Create a short conversation title from the first turn.
     """
     title = message.strip()
 
     if not title:
+        if tool_name:
+            return f"{tool_name.replace('_', ' ').title()} Result"
         return "Document Analysis" if has_attachment else "New Conversation"
 
     # Remove excessive whitespace.
@@ -198,6 +274,11 @@ def chat():
         conversation_id = data.get("conversation_id")
         file_id = data.get("file_id")
 
+        try:
+            tool_context = _validate_tool_context(data.get("tool_context"))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
         if message is None:
             message = ""
         elif isinstance(message, str):
@@ -208,11 +289,12 @@ def chat():
         if len(message) > MAX_MESSAGE_LENGTH:
             return jsonify({"error": "Message is too long."}), 413
 
-        # A file-only turn (no typed text) is valid as long as a file_id
-        # was actually supplied — otherwise there is nothing to process.
-        has_attachment_attempt = file_id is not None
+        # A file-only or tool-context-only turn (no typed text) is valid
+        # as long as one of them was actually supplied — otherwise there
+        # is nothing to process.
+        has_context_attempt = file_id is not None or tool_context is not None
 
-        if not message and not has_attachment_attempt:
+        if not message and not has_context_attempt:
             return jsonify({"error": "No message provided."}), 400
 
         logger.debug(
@@ -306,18 +388,23 @@ def chat():
                 }), 500
 
         logger.debug("[chat] current_file_attached=%s", bool(signed_file_url))
+        logger.debug("[chat] tool_context_attached=%s", bool(tool_context))
 
-        # A file attached with no typed text — the model needs guidance
-        # (added to `instructions` below, never stored as if the user
-        # typed it) to infer intent from the preceding conversation
-        # instead of asking the user to repeat themselves.
-        is_file_only_turn = bool(signed_file_url) and not message
+        # A file/tool_context attached with no typed text — the model
+        # needs guidance (added to `instructions` below, never stored as
+        # if the user typed it) to infer intent from the preceding
+        # conversation instead of asking the user to repeat themselves.
+        is_file_only_turn = bool(signed_file_url) and not message and not tool_context
+        is_tool_context_only_turn = bool(tool_context) and not message
 
-        if signed_file_url:
-            user_content = [
-                {"type": "input_text", "text": message},
-                {"type": "input_file", "file_url": signed_file_url},
-            ]
+        if signed_file_url or tool_context:
+            user_content = [{"type": "input_text", "text": message}]
+            if tool_context:
+                user_content.append(
+                    {"type": "input_text", "text": _format_tool_context_block(tool_context)}
+                )
+            if signed_file_url:
+                user_content.append({"type": "input_file", "file_url": signed_file_url})
         else:
             user_content = message
 
@@ -334,10 +421,15 @@ def chat():
                 "error": "The AI service is not configured correctly."
             }), 500
 
-        effective_instructions = system_prompt
-
+        extra_guidance = []
         if is_file_only_turn:
-            effective_instructions = f"{system_prompt}\n\n{FILE_ONLY_GUIDANCE}"
+            extra_guidance.append(FILE_ONLY_GUIDANCE)
+        if is_tool_context_only_turn:
+            extra_guidance.append(TOOL_CONTEXT_ONLY_GUIDANCE)
+
+        effective_instructions = system_prompt
+        if extra_guidance:
+            effective_instructions = "\n\n".join([system_prompt, *extra_guidance])
 
         try:
             openai_client = get_openai_client()
@@ -376,11 +468,12 @@ def chat():
 
         # Store the user message. Never store the temporary signed URL —
         # store the file_id instead.
-        if uploaded_file:
-            stored_user_content = {
-                "text": message,
-                "file_id": uploaded_file.id,
-            }
+        if uploaded_file or tool_context:
+            stored_user_content = {"text": message}
+            if uploaded_file:
+                stored_user_content["file_id"] = uploaded_file.id
+            if tool_context:
+                stored_user_content["tool_context"] = tool_context
         else:
             stored_user_content = message
 
@@ -399,7 +492,11 @@ def chat():
         db.session.add(assistant_message)
 
         if not previous_messages:
-            conversation.title = generate_title(message, uploaded_file is not None)
+            conversation.title = generate_title(
+                message,
+                uploaded_file is not None,
+                tool_context.get("tool") if tool_context else None,
+            )
 
         conversation.updated_at = datetime.now(timezone.utc)
 

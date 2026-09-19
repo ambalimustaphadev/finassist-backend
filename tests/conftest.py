@@ -1,8 +1,11 @@
+from decimal import Decimal
+
 import pytest
 from sqlalchemy.pool import StaticPool
 
 from extensions import db
 from server import create_app
+from services.tools.currency.providers.base import CurrencyProviderError
 
 
 class FakeR2Client:
@@ -33,6 +36,44 @@ def fake_r2(monkeypatch):
     monkeypatch.setattr("profile_routes.get_spaces_client", lambda: fake_client)
     monkeypatch.setattr("spaces.get_spaces_client", lambda: fake_client)
     return fake_client
+
+
+class FakeCurrencyProvider:
+    """Test double for CurrencyRateProvider. Never touches the network —
+    tests must not depend on Frankfurter's real availability."""
+
+    def __init__(self, rates=None, error=None):
+        self.rates = rates or {}
+        self.error = error
+        self.calls = []
+
+    def get_exchange_rate(self, base_currency, quote_currency):
+        self.calls.append((base_currency, quote_currency))
+        if self.error is not None:
+            raise self.error
+        key = (base_currency, quote_currency)
+        if key not in self.rates:
+            raise CurrencyProviderError(f"No fake rate configured for {key}.")
+        return {
+            "rate": Decimal(str(self.rates[key])),
+            "rate_date": "2026-09-18",
+            "source": "fake",
+        }
+
+
+@pytest.fixture()
+def fake_currency_provider(monkeypatch):
+    fake_provider = FakeCurrencyProvider(
+        rates={
+            ("USD", "NGN"): "1500.50",
+            ("NGN", "USD"): "0.000667",
+            ("EUR", "USD"): "1.08",
+        }
+    )
+    monkeypatch.setattr(
+        "services.tools.currency.service.get_default_provider", lambda: fake_provider
+    )
+    return fake_provider
 
 
 @pytest.fixture()

@@ -5,6 +5,7 @@ from preference_routes import preference_routes
 from activity_routes import activity_routes
 from notification_routes import notification_routes
 from subscription_routes import subscription_routes
+from tools_routes import tools_routes
 from extensions import db, migrate, jwt
 from flask import Flask
 from config import Config
@@ -36,6 +37,7 @@ def create_app(config_overrides=None):
     app.register_blueprint(activity_routes)
     app.register_blueprint(notification_routes)
     app.register_blueprint(subscription_routes)
+    app.register_blueprint(tools_routes)
 
     return app
 
