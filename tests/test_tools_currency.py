@@ -21,6 +21,12 @@ def test_currencies_requires_auth(client):
 
 # --- CURRENCIES LIST ---
 
+EXPECTED_CURRENCY_CODES = {
+    "NGN", "USD", "EUR", "GBP", "CAD", "AUD", "PLN", "CNY", "JPY",
+    "CHF", "SEK", "NOK", "AED", "ZAR", "INR",
+}
+
+
 def test_currencies_list_returns_codes_and_names(client, auth_headers):
     response = client.get("/api/tools/currency/currencies", headers=auth_headers)
     assert response.status_code == 200
@@ -31,6 +37,15 @@ def test_currencies_list_returns_codes_and_names(client, auth_headers):
     assert "NGN" in codes
     for entry in body["currencies"]:
         assert set(entry.keys()) == {"code", "name"}
+
+
+def test_currencies_list_returns_exactly_the_supported_fifteen(client, auth_headers):
+    response = client.get("/api/tools/currency/currencies", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.get_json()
+    codes = {c["code"] for c in body["currencies"]}
+    assert len(body["currencies"]) == 15
+    assert codes == EXPECTED_CURRENCY_CODES
 
 
 # --- CONVERSION ---
@@ -84,6 +99,23 @@ def test_convert_rejects_invalid_currency(client, auth_headers, fake_currency_pr
     body = response.get_json()
     assert body["error"]["code"] == "VALIDATION_ERROR"
     assert body["error"]["details"]["to_currency"] == "INVALID_CURRENCY"
+
+
+def test_convert_rejects_currency_outside_supported_fifteen(client, auth_headers, fake_currency_provider):
+    # GHS is a valid currency code elsewhere in the Tools backend, but it is
+    # not one of the 15 currencies the Currency Converter exposes.
+    response = _convert(client, auth_headers, from_currency="NGN", to_currency="GHS")
+    assert response.status_code == 400
+    body = response.get_json()
+    assert body["error"]["code"] == "VALIDATION_ERROR"
+    assert body["error"]["details"]["to_currency"] == "INVALID_CURRENCY"
+
+
+def test_convert_supports_newly_added_currency(client, auth_headers, fake_currency_provider):
+    response = _convert(client, auth_headers, from_currency="PLN", to_currency="NGN", amount="100")
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["result"]["rate"] == "375.200000"
 
 
 def test_convert_rejects_missing_currency(client, auth_headers, fake_currency_provider):

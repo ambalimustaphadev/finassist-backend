@@ -68,6 +68,7 @@ def fake_currency_provider(monkeypatch):
             ("USD", "NGN"): "1500.50",
             ("NGN", "USD"): "0.000667",
             ("EUR", "USD"): "1.08",
+            ("PLN", "NGN"): "375.20",
         }
     )
     monkeypatch.setattr(

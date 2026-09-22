@@ -3,42 +3,35 @@ CurrencyRateProvider interface, never on a specific provider — the
 route imports this module, not `providers.frankfurter`."""
 from decimal import Decimal
 
-from ..common import build_tool_result, decimal_str, require_currency_code, require_decimal
+from utils import ValidationError
+
+from ..common import build_tool_result, decimal_str, require_decimal
 from .providers.base import CurrencyProviderError
 from .providers.frankfurter import FrankfurterProvider
 
 TOOL_NAME = "currency_converter"
 
-# Backend is the source of truth for supported currency metadata — the
-# codes mirror utils.CURRENCIES (shared with Subscriptions), so any
-# currency accepted there is always convertible here.
+# Backend is the source of truth for which currencies the Currency
+# Converter exposes to Flutter — deliberately a curated subset of
+# utils.CURRENCIES (the wider set other Tools accept), not the full
+# Frankfurter currency list. Flutter maps each code to a presentation
+# flag itself; the backend only returns code + name.
 CURRENCY_NAMES = {
     "NGN": "Nigerian Naira",
-    "USD": "United States Dollar",
+    "USD": "US Dollar",
     "EUR": "Euro",
-    "GBP": "British Pound Sterling",
+    "GBP": "British Pound",
     "CAD": "Canadian Dollar",
     "AUD": "Australian Dollar",
-    "ZAR": "South African Rand",
-    "GHS": "Ghanaian Cedi",
-    "KES": "Kenyan Shilling",
-    "INR": "Indian Rupee",
-    "JPY": "Japanese Yen",
+    "PLN": "Polish Złoty",
     "CNY": "Chinese Yuan",
+    "JPY": "Japanese Yen",
     "CHF": "Swiss Franc",
     "SEK": "Swedish Krona",
     "NOK": "Norwegian Krone",
-    "DKK": "Danish Krone",
     "AED": "United Arab Emirates Dirham",
-    "SAR": "Saudi Riyal",
-    "EGP": "Egyptian Pound",
-    "XOF": "West African CFA Franc",
-    "XAF": "Central African CFA Franc",
-    "BRL": "Brazilian Real",
-    "MXN": "Mexican Peso",
-    "SGD": "Singapore Dollar",
-    "HKD": "Hong Kong Dollar",
-    "NZD": "New Zealand Dollar",
+    "ZAR": "South African Rand",
+    "INR": "Indian Rupee",
 }
 
 
@@ -55,14 +48,25 @@ def list_currencies():
     return [{"code": code, "name": CURRENCY_NAMES[code]} for code in sorted(CURRENCY_NAMES)]
 
 
+def _require_supported_currency(value, field_name, code="INVALID_CURRENCY"):
+    if not isinstance(value, str) or not value.strip():
+        raise ValidationError(f"{field_name} is required.", {field_name: code})
+    normalized = value.strip().upper()
+    if normalized not in CURRENCY_NAMES:
+        raise ValidationError(
+            f"'{value}' is not a supported currency code.", {field_name: code}
+        )
+    return normalized
+
+
 def convert(data, provider=None):
     provider = provider or get_default_provider()
 
     amount = require_decimal(
         data.get("amount"), "amount", "INVALID_AMOUNT", exclusive_minimum=0
     )
-    from_currency = require_currency_code(data.get("from_currency"), "from_currency")
-    to_currency = require_currency_code(data.get("to_currency"), "to_currency")
+    from_currency = _require_supported_currency(data.get("from_currency"), "from_currency")
+    to_currency = _require_supported_currency(data.get("to_currency"), "to_currency")
 
     if from_currency == to_currency:
         rate = Decimal(1)
