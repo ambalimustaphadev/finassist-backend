@@ -55,6 +55,19 @@ def _require_billing_date(value):
     return parse_date(value, "next_billing_date")
 
 
+def list_subscriptions(user_id):
+    return (
+        Subscription.query.filter_by(user_id=user_id)
+        .order_by(Subscription.next_billing_date.asc(), Subscription.id.asc())
+        .all()
+    )
+
+
+def delete_subscription(subscription):
+    db.session.delete(subscription)
+    db.session.commit()
+
+
 def subscription_to_dict(subscription):
     return {
         "id": subscription.id,

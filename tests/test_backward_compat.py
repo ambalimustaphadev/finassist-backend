@@ -60,17 +60,19 @@ def test_conversation_ownership_enforced(client, auth_headers, other_auth_header
 
 class _FakeResponse:
     output_text = "Mocked FinAssist reply."
+    output = []
 
 
 class _FakeResponses:
     def __init__(self):
         self.calls = []
 
-    def create(self, model, instructions, input):
+    def create(self, model, instructions, input, tools=None):
         self.calls.append({
             "model": model,
             "instructions": instructions,
             "input": input,
+            "tools": tools,
         })
         return _FakeResponse()
 
@@ -89,7 +91,7 @@ def _upload_file(client, headers, filename="statement.pdf", content=b"statement 
 
 
 def test_chat_sends_message_and_persists_history(client, auth_headers, monkeypatch):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -111,7 +113,7 @@ def test_chat_sends_message_and_persists_history(client, auth_headers, monkeypat
 
 def test_chat_with_file_attachment(client, auth_headers, monkeypatch, fake_r2):
     fake_openai = _FakeOpenAIClient()
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: fake_openai)
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: fake_openai)
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -142,7 +144,7 @@ def test_chat_with_file_attachment(client, auth_headers, monkeypatch, fake_r2):
 
 def test_chat_ignores_client_provided_file_url(client, auth_headers, monkeypatch):
     fake_openai = _FakeOpenAIClient()
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: fake_openai)
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: fake_openai)
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -165,7 +167,7 @@ def test_chat_ignores_client_provided_file_url(client, auth_headers, monkeypatch
 
 
 def test_chat_rejects_other_users_file_id(client, auth_headers, other_auth_headers, monkeypatch, fake_r2):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -184,7 +186,7 @@ def test_chat_accepts_decimal_string_file_id(client, auth_headers, monkeypatch, 
     """Regression test: a Dart num/double round-trip commonly serializes an
     id as "1.0" instead of "1". The backend must still resolve it to the
     same file rather than rejecting it as an invalid file_id."""
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -200,7 +202,7 @@ def test_chat_accepts_decimal_string_file_id(client, auth_headers, monkeypatch, 
 
 
 def test_chat_accepts_numeric_string_and_float_ids(client, auth_headers, monkeypatch, fake_r2):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -219,7 +221,7 @@ def test_chat_rejects_malformed_file_id_shape(client, auth_headers, monkeypatch)
     """A nested object instead of a scalar id is a genuinely malformed
     request and must still be rejected — this is not the same bug as the
     decimal-string case above and must not be silently accepted."""
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -235,7 +237,7 @@ def test_chat_rejects_malformed_file_id_shape(client, auth_headers, monkeypatch)
 
 
 def test_chat_missing_message_and_missing_file_id_rejected(client, auth_headers, monkeypatch):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -250,7 +252,7 @@ def test_chat_missing_message_and_missing_file_id_rejected(client, auth_headers,
 
 def test_chat_file_only_message_omitted_succeeds(client, auth_headers, monkeypatch, fake_r2):
     fake_openai = _FakeOpenAIClient()
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: fake_openai)
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: fake_openai)
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -279,7 +281,7 @@ def test_chat_file_only_message_omitted_succeeds(client, auth_headers, monkeypat
 
 
 def test_chat_file_only_message_empty_string_succeeds(client, auth_headers, monkeypatch, fake_r2):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -298,7 +300,7 @@ def test_chat_file_only_message_empty_string_succeeds(client, auth_headers, monk
 
 
 def test_chat_file_only_message_whitespace_succeeds(client, auth_headers, monkeypatch, fake_r2):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -317,7 +319,7 @@ def test_chat_file_only_message_whitespace_succeeds(client, auth_headers, monkey
 
 
 def test_chat_rejects_other_users_conversation_id(client, auth_headers, other_auth_headers, monkeypatch):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
 
     other_users_conversation_id = client.post(
         "/api/conversations", headers=other_auth_headers, json={}
@@ -336,7 +338,7 @@ def test_chat_file_only_uses_preceding_conversation_context(client, auth_headers
     document was uploaded (e.g. it was requested in a prior assistant
     turn)."""
     fake_openai = _FakeOpenAIClient()
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: fake_openai)
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: fake_openai)
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -381,7 +383,7 @@ def test_chat_does_not_resend_historical_attachment(client, auth_headers, monkey
     a lightweight text reference so the model still knows a document was
     involved."""
     fake_openai = _FakeOpenAIClient()
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: fake_openai)
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: fake_openai)
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -426,7 +428,7 @@ def test_chat_does_not_resend_historical_attachment(client, auth_headers, monkey
 
 
 def test_chat_context_within_limit_sends_everything(client, auth_headers, monkeypatch):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -440,7 +442,7 @@ def test_chat_context_within_limit_sends_everything(client, auth_headers, monkey
         assert response.status_code == 200
 
     fake_openai = _FakeOpenAIClient()
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: fake_openai)
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: fake_openai)
 
     final = client.post("/api/chat", headers=auth_headers, json={
         "conversation_id": conversation_id,
@@ -459,9 +461,9 @@ def test_chat_context_bounded_to_recent_messages_only(client, auth_headers, monk
     """A long conversation must not resend its entire history — only the
     most recent CHAT_CONTEXT_MESSAGE_LIMIT messages, in chronological
     order, plus the current turn."""
-    import chat_routes
+    from services import chat_service
 
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -476,7 +478,7 @@ def test_chat_context_bounded_to_recent_messages_only(client, auth_headers, monk
         assert response.status_code == 200
 
     fake_openai = _FakeOpenAIClient()
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: fake_openai)
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: fake_openai)
 
     final = client.post("/api/chat", headers=auth_headers, json={
         "conversation_id": conversation_id,
@@ -485,7 +487,7 @@ def test_chat_context_bounded_to_recent_messages_only(client, auth_headers, monk
     assert final.status_code == 200
 
     sent_input = fake_openai.responses.calls[-1]["input"]
-    limit = chat_routes.CHAT_CONTEXT_MESSAGE_LIMIT
+    limit = chat_service.CHAT_CONTEXT_MESSAGE_LIMIT
     assert limit == 20
 
     # limit historical messages + 1 current turn.
@@ -508,7 +510,7 @@ def test_chat_context_bounded_to_recent_messages_only(client, auth_headers, monk
 
 def test_chat_current_message_and_file_not_duplicated(client, auth_headers, monkeypatch, fake_r2):
     fake_openai = _FakeOpenAIClient()
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: fake_openai)
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: fake_openai)
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -557,7 +559,7 @@ def test_chat_current_message_and_file_not_duplicated(client, auth_headers, monk
 
 
 def test_plain_text_conversation_without_attachments_still_works(client, auth_headers, monkeypatch):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -580,7 +582,7 @@ def test_plain_text_conversation_without_attachments_still_works(client, auth_he
 
 
 def test_chat_requires_existing_conversation(client, auth_headers, monkeypatch):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
 
     response = client.post("/api/chat", headers=auth_headers, json={
         "message": "hello",
@@ -593,7 +595,7 @@ class _RaisingResponses:
     def __init__(self, exc):
         self._exc = exc
 
-    def create(self, model, instructions, input):
+    def create(self, model, instructions, input, tools=None):
         raise self._exc
 
 
@@ -612,7 +614,7 @@ def test_chat_openai_service_failure_returns_502(client, auth_headers, monkeypat
     openai_error = openai.APIConnectionError(request=request)
 
     monkeypatch.setattr(
-        "chat_routes.get_openai_client",
+        "services.ai_service.get_openai_client",
         lambda: _RaisingOpenAIClient(openai_error),
     )
 
@@ -633,7 +635,7 @@ def test_chat_unexpected_error_returns_500_not_502(client, auth_headers, monkeyp
     that isn't an openai.OpenAIError) must NOT be disguised as an OpenAI
     service outage — it should surface as the generic 500."""
     monkeypatch.setattr(
-        "chat_routes.get_openai_client",
+        "services.ai_service.get_openai_client",
         lambda: _RaisingOpenAIClient(RuntimeError("boom")),
     )
 
@@ -652,7 +654,7 @@ def test_chat_unexpected_error_returns_500_not_502(client, auth_headers, monkeyp
 
 
 def test_chat_file_only_first_turn_gets_document_title(client, auth_headers, monkeypatch, fake_r2):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -670,7 +672,7 @@ def test_chat_file_only_first_turn_gets_document_title(client, auth_headers, mon
 
 
 def test_chat_text_first_turn_title_unaffected(client, auth_headers, monkeypatch):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -689,7 +691,7 @@ def test_chat_text_first_turn_title_unaffected(client, auth_headers, monkeypatch
 def test_chat_logs_exclude_sensitive_content(client, auth_headers, monkeypatch, fake_r2, caplog):
     import logging
 
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
 
     conversation_id = client.post(
         "/api/conversations", headers=auth_headers, json={}
@@ -698,7 +700,7 @@ def test_chat_logs_exclude_sensitive_content(client, auth_headers, monkeypatch, 
 
     secret_message = "My account number is 0123456789 and I earn a very specific salary."
 
-    with caplog.at_level(logging.DEBUG, logger="chat_routes"):
+    with caplog.at_level(logging.DEBUG):
         response = client.post("/api/chat", headers=auth_headers, json={
             "conversation_id": conversation_id,
             "message": secret_message,

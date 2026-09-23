@@ -7,8 +7,10 @@ in `services/tools/<tool>/service.py` and `calculator.py`; a route only
 parses the request, calls the service, and maps exceptions to the
 existing structured error shape (utils.error_response).
 """
+import logging
+
 from flask import Blueprint, jsonify, request
-from flask_jwt_extended import get_jwt_identity, jwt_required
+from flask_jwt_extended import jwt_required
 
 from services.tools.affordability import service as affordability_service
 from services.tools.currency import service as currency_service
@@ -19,9 +21,10 @@ from services.tools.loan import service as loan_service
 from services.tools.savings import service as savings_service
 from services.tools.subscription_cost import service as subscription_cost_service
 from services.tools.subscription_cost.service import SubscriptionNotFound
-from utils import ValidationError, error_response, validation_error_response
+from utils import ValidationError, current_user_id, error_response, validation_error_response
 
 tools_routes = Blueprint("tools", __name__)
+logger = logging.getLogger(__name__)
 
 
 @tools_routes.route("/api/tools/currency/currencies", methods=["GET"])
@@ -44,8 +47,8 @@ def post_currency_convert():
             "The exchange rate provider is temporarily unavailable. Please try again.",
             502,
         )
-    except Exception as e:
-        print(f"Currency conversion error: {e}")
+    except Exception:
+        logger.exception("Currency conversion error")
         return error_response(
             "INTERNAL_ERROR", "Something went wrong while converting currency.", 500
         )
@@ -60,8 +63,8 @@ def post_loan_calculate():
         result = loan_service.calculate(data)
     except ValidationError as exc:
         return validation_error_response(exc)
-    except Exception as e:
-        print(f"Loan calculation error: {e}")
+    except Exception:
+        logger.exception("Loan calculation error")
         return error_response(
             "INTERNAL_ERROR", "Something went wrong while calculating the loan.", 500
         )
@@ -76,8 +79,8 @@ def post_savings_calculate():
         result = savings_service.calculate(data)
     except ValidationError as exc:
         return validation_error_response(exc)
-    except Exception as e:
-        print(f"Savings calculation error: {e}")
+    except Exception:
+        logger.exception("Savings calculation error")
         return error_response(
             "INTERNAL_ERROR", "Something went wrong while calculating savings.", 500
         )
@@ -92,8 +95,8 @@ def post_affordability_calculate():
         result = affordability_service.calculate(data)
     except ValidationError as exc:
         return validation_error_response(exc)
-    except Exception as e:
-        print(f"Affordability calculation error: {e}")
+    except Exception:
+        logger.exception("Affordability calculation error")
         return error_response(
             "INTERNAL_ERROR", "Something went wrong while calculating affordability.", 500
         )
@@ -108,8 +111,8 @@ def post_debt_payoff_calculate():
         result = debt_payoff_service.calculate(data)
     except ValidationError as exc:
         return validation_error_response(exc)
-    except Exception as e:
-        print(f"Debt payoff calculation error: {e}")
+    except Exception:
+        logger.exception("Debt payoff calculation error")
         return error_response(
             "INTERNAL_ERROR", "Something went wrong while calculating debt payoff.", 500
         )
@@ -124,8 +127,8 @@ def post_investment_calculate():
         result = investment_service.calculate(data)
     except ValidationError as exc:
         return validation_error_response(exc)
-    except Exception as e:
-        print(f"Investment calculation error: {e}")
+    except Exception:
+        logger.exception("Investment calculation error")
         return error_response(
             "INTERNAL_ERROR", "Something went wrong while calculating investment growth.", 500
         )
@@ -135,7 +138,7 @@ def post_investment_calculate():
 @tools_routes.route("/api/tools/subscription-cost/calculate", methods=["POST"])
 @jwt_required()
 def post_subscription_cost_calculate():
-    user_id = int(get_jwt_identity())
+    user_id = current_user_id()
     data = request.get_json(silent=True) or {}
     try:
         result = subscription_cost_service.calculate(user_id, data)
@@ -148,8 +151,8 @@ def post_subscription_cost_calculate():
             404,
             {"subscription_ids": exc.missing_ids},
         )
-    except Exception as e:
-        print(f"Subscription cost calculation error: {e}")
+    except Exception:
+        logger.exception("Subscription cost calculation error user_id=%s", user_id)
         return error_response(
             "INTERNAL_ERROR", "Something went wrong while calculating subscription cost.", 500
         )

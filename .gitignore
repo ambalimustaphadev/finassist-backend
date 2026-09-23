@@ -27,6 +27,12 @@ ENV/
 .env.*
 !.env.example
 
+# Firebase service-account credentials (FIREBASE_CREDENTIALS_PATH)
+# must never be committed — see .env.example for how the app is
+# configured to read this instead of a hardcoded path.
+firebase-service-account*.json
+*firebase-adminsdk*.json
+
 # =========================
 # Databases
 # =========================

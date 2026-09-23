@@ -1,9 +1,11 @@
 import logging
+import os
+import uuid
 from urllib.parse import urlparse
 
 from extensions import db
 from services.activity_service import log_activity
-from spaces import delete_object, generate_signed_url
+from spaces import delete_object, generate_signed_url, upload_object
 from utils import (
     ValidationError,
     require_currency,
@@ -18,6 +20,9 @@ EMPLOYMENT_STATUSES = {
     "employed", "self_employed", "unemployed", "student", "retired", "other",
 }
 INCOME_FREQUENCIES = {"weekly", "biweekly", "monthly", "yearly"}
+
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5MB
 
 # Short-lived, matching the expiration used for financial-document
 # signed URLs elsewhere in the app.
@@ -139,6 +144,20 @@ def update_profile(user, data):
     return user
 
 
+def validate_profile_picture(content_type, content):
+    """Raises ValidationError if the uploaded profile-picture content
+    isn't an allowed image type or exceeds the size limit. Mirrors the
+    validation previously inlined in profile_routes.upload_profile_picture."""
+    if content_type not in ALLOWED_IMAGE_TYPES:
+        raise ValidationError(
+            "Profile picture must be a JPEG, PNG, or WEBP image.",
+            {"content_type": "unsupported"},
+        )
+
+    if len(content) > MAX_IMAGE_SIZE:
+        raise ValidationError("Profile picture must be 5MB or smaller.")
+
+
 def set_profile_picture(user, object_key):
     """Store the new profile-picture object key and clean up the
     previous R2 object, if any.
@@ -160,3 +179,17 @@ def set_profile_picture(user, object_key):
             delete_object(previous_key)
 
     return user
+
+
+def save_profile_picture(user, content, content_type, filename):
+    """Uploads new profile-picture bytes to R2 under a fresh key, then
+    stores that key on the user (see `set_profile_picture` for the
+    old-object cleanup semantics). Raises whatever `spaces.upload_object`
+    raises on a storage failure — the caller (profile_routes.py) maps
+    that to its existing error response."""
+    extension = os.path.splitext(filename)[1].lower()
+    file_key = f"profile-pictures/{user.id}/{uuid.uuid4()}{extension}"
+
+    upload_object(file_key, content, content_type)
+
+    return set_profile_picture(user, file_key)

@@ -2,6 +2,7 @@ import json
 
 from extensions import db
 from models import Activity
+from utils import ValidationError, require_non_empty_string, safe_json_loads
 
 # Types services are allowed to log automatically. Kept explicit so a
 # typo in a `type` string doesn't silently create a garbage activity row.
@@ -36,13 +37,30 @@ def log_activity(user_id, type_, title, description=None, metadata=None):
     return activity
 
 
+def record_client_activity(user_id, type_, title, description=None, metadata=None):
+    """Logs and commits an activity reported directly by the client
+    (a calculator that runs entirely in the app, etc). Only the
+    client-loggable types are accepted, so this can never be used to
+    forge a server-side event like `goal_created`."""
+    if type_ not in CLIENT_LOGGABLE_TYPES:
+        raise ValidationError(
+            f"'{type_}' is not a loggable activity type.",
+            {"type": f"must be one of {sorted(CLIENT_LOGGABLE_TYPES)}"},
+        )
+
+    title = require_non_empty_string(title, "title", 120)
+
+    activity = log_activity(user_id, type_, title, description, metadata)
+    db.session.commit()
+    return activity
+
+
+def list_activity(user_id):
+    return Activity.query.filter_by(user_id=user_id).order_by(Activity.created_at.desc())
+
+
 def activity_to_dict(activity):
-    metadata = None
-    if activity.activity_metadata:
-        try:
-            metadata = json.loads(activity.activity_metadata)
-        except (TypeError, ValueError):
-            metadata = None
+    metadata = safe_json_loads(activity.activity_metadata)
     return {
         "id": activity.id,
         "type": activity.type,

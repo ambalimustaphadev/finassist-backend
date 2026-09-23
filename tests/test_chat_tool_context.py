@@ -5,14 +5,17 @@ tests must never depend on a real AI call."""
 
 class _FakeResponse:
     output_text = "Mocked FinAssist reply."
+    output = []
 
 
 class _FakeResponses:
     def __init__(self):
         self.calls = []
 
-    def create(self, model, instructions, input):
-        self.calls.append({"model": model, "instructions": instructions, "input": input})
+    def create(self, model, instructions, input, tools=None):
+        self.calls.append({
+            "model": model, "instructions": instructions, "input": input, "tools": tools,
+        })
         return _FakeResponse()
 
 
@@ -40,7 +43,7 @@ def _new_conversation(client, headers):
 
 def test_tool_context_accepted_with_message(client, auth_headers, monkeypatch):
     fake_openai = _FakeOpenAIClient()
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: fake_openai)
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: fake_openai)
     conversation_id = _new_conversation(client, auth_headers)
 
     response = client.post("/api/chat", headers=auth_headers, json={
@@ -61,7 +64,7 @@ def test_tool_context_accepted_with_message(client, auth_headers, monkeypatch):
 
 def test_empty_message_with_tool_context_is_valid(client, auth_headers, monkeypatch):
     fake_openai = _FakeOpenAIClient()
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: fake_openai)
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: fake_openai)
     conversation_id = _new_conversation(client, auth_headers)
 
     response = client.post("/api/chat", headers=auth_headers, json={
@@ -77,7 +80,7 @@ def test_empty_message_with_tool_context_is_valid(client, auth_headers, monkeypa
 
 
 def test_tool_context_persisted_and_returned_in_history(client, auth_headers, monkeypatch):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
     conversation_id = _new_conversation(client, auth_headers)
     context = _valid_tool_context()
 
@@ -94,7 +97,7 @@ def test_tool_context_persisted_and_returned_in_history(client, auth_headers, mo
 
 def test_historical_tool_context_not_resent_on_later_turns(client, auth_headers, monkeypatch):
     fake_openai = _FakeOpenAIClient()
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: fake_openai)
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: fake_openai)
     conversation_id = _new_conversation(client, auth_headers)
 
     client.post("/api/chat", headers=auth_headers, json={
@@ -117,7 +120,7 @@ def test_historical_tool_context_not_resent_on_later_turns(client, auth_headers,
 
 
 def test_malformed_tool_context_missing_type_rejected(client, auth_headers, monkeypatch):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
     conversation_id = _new_conversation(client, auth_headers)
 
     context = _valid_tool_context()
@@ -132,7 +135,7 @@ def test_malformed_tool_context_missing_type_rejected(client, auth_headers, monk
 
 
 def test_malformed_tool_context_wrong_type_rejected(client, auth_headers, monkeypatch):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
     conversation_id = _new_conversation(client, auth_headers)
 
     response = client.post("/api/chat", headers=auth_headers, json={
@@ -144,7 +147,7 @@ def test_malformed_tool_context_wrong_type_rejected(client, auth_headers, monkey
 
 
 def test_malformed_tool_context_not_an_object_rejected(client, auth_headers, monkeypatch):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
     conversation_id = _new_conversation(client, auth_headers)
 
     response = client.post("/api/chat", headers=auth_headers, json={
@@ -156,7 +159,7 @@ def test_malformed_tool_context_not_an_object_rejected(client, auth_headers, mon
 
 
 def test_malformed_tool_context_missing_result_rejected(client, auth_headers, monkeypatch):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
     conversation_id = _new_conversation(client, auth_headers)
 
     context = _valid_tool_context()
@@ -171,7 +174,7 @@ def test_malformed_tool_context_missing_result_rejected(client, auth_headers, mo
 
 
 def test_no_message_and_no_tool_context_and_no_file_still_rejected(client, auth_headers, monkeypatch):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
     conversation_id = _new_conversation(client, auth_headers)
 
     response = client.post("/api/chat", headers=auth_headers, json={
@@ -183,7 +186,7 @@ def test_no_message_and_no_tool_context_and_no_file_still_rejected(client, auth_
 
 def test_tool_identifier_and_version_reach_ai_layer(client, auth_headers, monkeypatch):
     fake_openai = _FakeOpenAIClient()
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: fake_openai)
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: fake_openai)
     conversation_id = _new_conversation(client, auth_headers)
 
     client.post("/api/chat", headers=auth_headers, json={
@@ -199,7 +202,7 @@ def test_tool_identifier_and_version_reach_ai_layer(client, auth_headers, monkey
 
 
 def test_conversation_title_reflects_tool_when_no_message(client, auth_headers, monkeypatch):
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: _FakeOpenAIClient())
     conversation_id = _new_conversation(client, auth_headers)
 
     client.post("/api/chat", headers=auth_headers, json={
@@ -214,7 +217,7 @@ def test_conversation_title_reflects_tool_when_no_message(client, auth_headers, 
 
 def test_normal_message_without_tool_context_unaffected(client, auth_headers, monkeypatch):
     fake_openai = _FakeOpenAIClient()
-    monkeypatch.setattr("chat_routes.get_openai_client", lambda: fake_openai)
+    monkeypatch.setattr("services.ai_service.get_openai_client", lambda: fake_openai)
     conversation_id = _new_conversation(client, auth_headers)
 
     response = client.post("/api/chat", headers=auth_headers, json={

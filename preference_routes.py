@@ -1,5 +1,7 @@
+import logging
+
 from flask import Blueprint, jsonify, request
-from flask_jwt_extended import get_jwt_identity, jwt_required
+from flask_jwt_extended import jwt_required
 
 from extensions import db
 from services.preference_service import (
@@ -7,15 +9,16 @@ from services.preference_service import (
     preferences_to_dict,
     update_preferences,
 )
-from utils import ValidationError, error_response, validation_error_response
+from utils import ValidationError, current_user_id, error_response, validation_error_response
 
 preference_routes = Blueprint("preferences", __name__)
+logger = logging.getLogger(__name__)
 
 
 @preference_routes.route("/api/preferences", methods=["GET"])
 @jwt_required()
 def get_preferences():
-    user_id = int(get_jwt_identity())
+    user_id = current_user_id()
     preferences = get_or_create_preferences(user_id)
     return jsonify(preferences_to_dict(preferences)), 200
 
@@ -23,7 +26,7 @@ def get_preferences():
 @preference_routes.route("/api/preferences", methods=["PATCH"])
 @jwt_required()
 def patch_preferences():
-    user_id = int(get_jwt_identity())
+    user_id = current_user_id()
     preferences = get_or_create_preferences(user_id)
 
     data = request.get_json(silent=True) or {}
@@ -33,9 +36,9 @@ def patch_preferences():
     except ValidationError as exc:
         db.session.rollback()
         return validation_error_response(exc)
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        print(f"Update preferences error: {e}")
+        logger.exception("Update preferences error user_id=%s", user_id)
         return error_response("INTERNAL_ERROR", "Something went wrong while updating your preferences.", 500)
 
     return jsonify(preferences_to_dict(preferences)), 200

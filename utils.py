@@ -1,13 +1,110 @@
-"""Shared helpers for the non-chat API surface (profile, preferences,
-activity, notifications). The existing auth/chat/conversation/file
-endpoints keep their own flat `{"error": "..."}` shape since Flutter
-already depends on it; every route added on top of this module uses
-the structured shape instead so new endpoints are consistent with each
-other.
+"""Shared helpers used across the API surface: request/JWT-identity
+access, ownership-scoped lookups, and the structured error-response
+convention. The original auth/chat/conversation/file endpoints keep
+their own flat `{"error": "..."}` shape since Flutter already depends
+on it; every route built on top of this module since uses the
+structured shape instead so those endpoints are consistent with each
+other. `current_user_id`/`get_owned` below are convention-agnostic —
+both shapes' routes use them the same way.
 """
+import json
 from datetime import date, datetime
 
 from flask import jsonify
+from flask_jwt_extended import get_jwt_identity
+
+def current_user_id():
+    """The authenticated user's id from the current request's JWT.
+    Centralizes the `int(get_jwt_identity())` call repeated across
+    every route module — the JWT is always the source of truth for
+    identity, never anything from request JSON/query params.
+
+    A handful of routes (chat, file uploads) deliberately guard this
+    conversion themselves to return a specific error response on a
+    malformed identity; they call `get_jwt_identity()` directly instead
+    of this helper so that existing behavior is untouched.
+    """
+    return int(get_jwt_identity())
+
+
+def get_owned(model, obj_id, user_id):
+    """The `model` row with id `obj_id` if (and only if) it belongs to
+    `user_id`, else None. Centralizes the
+    `Model.query.filter_by(id=obj_id, user_id=user_id).first()`
+    ownership-check pattern duplicated across route modules — callers
+    still build their own 404/error response from a None result, so
+    this changes no response shape, only removes the repeated query.
+    """
+    return model.query.filter_by(id=obj_id, user_id=user_id).first()
+
+
+def authenticated_user_id_or_none():
+    """`int(get_jwt_identity())`, or None if the identity is malformed.
+    A handful of routes (chat, file uploads) need this None-on-failure
+    form rather than `current_user_id()`'s bare conversion, so they can
+    build their own specific 401 response from the None result. Shared
+    here to remove the duplicated try/except across those routes."""
+    try:
+        return int(get_jwt_identity())
+    except (TypeError, ValueError):
+        return None
+
+
+def current_user():
+    """The authenticated request's User row, or None. Centralizes
+    `User.query.get(current_user_id())`, duplicated identically across
+    route modules that need the full user row rather than just the id."""
+    from models import User
+    return User.query.get(current_user_id())
+
+
+def parse_positive_id(value):
+    """A positive int id from `value`, tolerating the shapes real
+    clients actually send: a Dart `num`/`double` round-trip commonly
+    produces "1.0" instead of "1" for the same id, and a plain numeric
+    string ("1") is also legitimate. Both are accepted. Anything that
+    isn't unambiguously an integer value (bools, nested objects/lists,
+    non-integral numbers, empty/garbage strings) raises ValueError so
+    the caller can reject it with a 400.
+    """
+    if isinstance(value, bool):
+        raise ValueError("must be an integer")
+
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float):
+        if not value.is_integer():
+            raise ValueError("must be an integer")
+        parsed = int(value)
+    elif isinstance(value, str):
+        stripped = value.strip()
+        try:
+            parsed = int(stripped)
+        except ValueError:
+            as_float = float(stripped)  # raises ValueError for non-numeric strings
+            if not as_float.is_integer():
+                raise ValueError("must be an integer")
+            parsed = int(as_float)
+    else:
+        raise ValueError("must be an integer")
+
+    if parsed <= 0:
+        raise ValueError("must be positive")
+
+    return parsed
+
+
+def safe_json_loads(value):
+    """`json.loads(value)`, or None if `value` is empty/falsy or not
+    valid JSON. Centralizes the parse-with-guard pattern duplicated
+    across model-metadata serializers."""
+    if not value:
+        return None
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return None
+
 
 CURRENCIES = {
     "NGN", "USD", "EUR", "GBP", "CAD", "AUD", "ZAR", "GHS", "KES",

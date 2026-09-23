@@ -32,8 +32,11 @@ class FakeR2Client:
 @pytest.fixture()
 def fake_r2(monkeypatch):
     fake_client = FakeR2Client()
-    monkeypatch.setattr("file_routes.get_spaces_client", lambda: fake_client)
-    monkeypatch.setattr("profile_routes.get_spaces_client", lambda: fake_client)
+    # file_service.py/profile_service.py only ever reach R2 through
+    # spaces.py's own wrappers (upload_object/delete_object/
+    # generate_signed_url), which all resolve get_spaces_client() from
+    # this module's own namespace — patching it here is the single
+    # interception point for every caller.
     monkeypatch.setattr("spaces.get_spaces_client", lambda: fake_client)
     return fake_client
 
@@ -75,6 +78,73 @@ def fake_currency_provider(monkeypatch):
         "services.tools.currency.service.get_default_provider", lambda: fake_provider
     )
     return fake_provider
+
+
+class FakeSendResult:
+    """Stand-in for firebase_admin.messaging.SendResponse."""
+
+    def __init__(self, success, exception=None):
+        self.success = success
+        self.exception = exception
+
+
+class FakeBatchResponse:
+    """Stand-in for firebase_admin.messaging.BatchResponse."""
+
+    def __init__(self, responses):
+        self.responses = responses
+        self.success_count = sum(1 for r in responses if r.success)
+        self.failure_count = len(responses) - self.success_count
+
+
+class FakePushNotifications:
+    """Test double for push_notification_service._send_multicast — the
+    one seam that module is designed to be tested through (see its
+    module docstring). Never touches Firebase or the network.
+
+    Configure `invalid_tokens` (a set of token strings that should come
+    back as an UnregisteredError, i.e. "this token is dead") or
+    `unavailable=True` (simulates the whole FCM request failing) before
+    a send. Every call is recorded in `.calls`.
+    """
+
+    def __init__(self):
+        self.calls = []
+        self.invalid_tokens = set()
+        self.unavailable = False
+
+    def __call__(self, tokens, title, body, data):
+        self.calls.append({
+            "tokens": list(tokens), "title": title, "body": body, "data": data,
+        })
+        if self.unavailable:
+            from services.push_notification_service import PushNotificationUnavailable
+            raise PushNotificationUnavailable("fake FCM outage")
+
+        from firebase_admin import messaging
+
+        responses = [
+            FakeSendResult(False, exception=messaging.UnregisteredError("gone"))
+            if token in self.invalid_tokens
+            else FakeSendResult(True)
+            for token in tokens
+        ]
+        return FakeBatchResponse(responses)
+
+
+@pytest.fixture()
+def fake_push(monkeypatch):
+    fake = FakePushNotifications()
+    monkeypatch.setattr("services.push_notification_service._send_multicast", fake)
+    return fake
+
+
+def register_device_token(client, headers, token="fcm-token-1", platform="ios"):
+    return client.post(
+        "/api/notifications/device-token",
+        headers=headers,
+        json={"token": token, "platform": platform},
+    )
 
 
 @pytest.fixture()

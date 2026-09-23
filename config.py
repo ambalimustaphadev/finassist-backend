@@ -36,3 +36,21 @@ class Config(object):
     # (e.g. one that does need a key) only touches config + the provider
     # implementation, never CurrencyService or the routes.
     FRANKFURTER_BASE_URL = os.environ.get("FRANKFURTER_BASE_URL", "https://api.frankfurter.dev/v2")
+
+# Firebase Admin — push notification delivery (see
+# services/push_notification_service.py, the only module that reads
+# these). Exactly one of the two should be set in a real deployment:
+#
+#   FIREBASE_CREDENTIALS_JSON  the service account key as a raw JSON
+#                              string (e.g. a platform "secret" env var)
+#   FIREBASE_CREDENTIALS_PATH  a filesystem path to the service account
+#                              JSON file instead, for deployments that
+#                              prefer mounting a secret file
+#
+# If FIREBASE_CREDENTIALS_JSON is set it takes precedence. If neither
+# is set, push notification delivery is disabled: Firebase Admin is
+# never initialized, and send attempts fail closed with a safe
+# PUSH_NOTIFICATION_UNAVAILABLE error rather than raising — the rest of
+# the app (including reminders/notifications) keeps working normally.
+    FIREBASE_CREDENTIALS_JSON = os.environ.get("FIREBASE_CREDENTIALS_JSON")
+    FIREBASE_CREDENTIALS_PATH = os.environ.get("FIREBASE_CREDENTIALS_PATH")

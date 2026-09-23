@@ -35,6 +35,20 @@ def generate_signed_url(key: str, expires_in: int = 300) -> str:
     )
 
 
+def upload_object(key: str, body: bytes, content_type: str) -> None:
+    """Upload a private object to R2. Raises on failure (network,
+    auth, bucket issues) — callers that need to roll back a partial
+    operation (e.g. a database record) on failure catch the exception
+    themselves."""
+    client = get_spaces_client()
+    client.put_object(
+        Bucket=Config.R2_BUCKET_NAME,
+        Key=key,
+        Body=body,
+        ContentType=content_type,
+    )
+
+
 def delete_object(key: str) -> None:
     """Delete a single object from R2. Silently ignores failures (e.g.
     NoSuchKey) — deleting a file that's already gone isn't an error for
