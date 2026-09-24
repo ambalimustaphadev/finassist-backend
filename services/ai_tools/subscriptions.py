@@ -23,7 +23,7 @@ from datetime import date, timedelta
 
 from extensions import db
 from models import Subscription, User
-from services.subscription_service import STATUSES
+from services.subscription_service import STATUSES, infer_category, normalize_category
 from services.subscription_service import create_subscription as _create_subscription
 from services.subscription_service import subscription_to_dict
 from services.subscription_service import update_subscription as _update_subscription
@@ -57,6 +57,7 @@ _UPDATABLE_FIELDS = {
     "renewal_date": "next_billing_date",
     "currency": "currency",
     "billing_cycle": "frequency",
+    "category": "category",
 }
 
 
@@ -80,6 +81,15 @@ def _default_currency(user_id):
     model doesn't supply one."""
     user = User.query.get(user_id)
     return user.currency if user and user.currency else "NGN"
+
+
+def _resolve_category(value, service_name):
+    """Explicit category (normalized) wins; with none given, infer one
+    from the service name. A category that can't be interpreted becomes
+    "other" — never free model text written to the database."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return infer_category(service_name)
+    return normalize_category(value) or "other"
 
 
 def list_subscriptions(user_id, arguments):
@@ -145,9 +155,8 @@ def get_upcoming_renewals(user_id, arguments):
 
 def get_monthly_spend(user_id, arguments):
     # The subscription-cost calculator is the existing, authoritative
-    # source for normalized monthly/yearly totals — the same one
-    # `/api/tools/subscription-cost/calculate` uses.
-    return _calculate_subscription_cost(user_id, {})
+    # source for normalized monthly/yearly totals.
+    return _calculate_subscription_cost(user_id)
 
 
 def get_subscription_details(user_id, arguments):
@@ -168,6 +177,9 @@ def add_subscription(user_id, arguments):
         "next_billing_date": arguments.get("renewal_date"),
         "currency": arguments.get("currency") or _default_currency(user_id),
         "frequency": billing_cycle,
+        "category": _resolve_category(
+            arguments.get("category"), arguments.get("service_name")
+        ),
     }
 
     try:
@@ -191,13 +203,15 @@ def update_subscription(user_id, arguments):
                 "INVALID_ARGUMENTS",
                 f"billing_cycle must be one of {sorted(BILLING_CYCLES)}.",
             )
+        if tool_field == "category":
+            value = normalize_category(value) or "other"
         data[model_field] = value
 
     if not data:
         raise ToolError(
             "INVALID_ARGUMENTS",
             "At least one field to update (service_name, price, renewal_date, "
-            "currency, or billing_cycle) must be provided.",
+            "currency, billing_cycle, or category) must be provided.",
         )
 
     try:

@@ -13,7 +13,8 @@ TOOL_NAME = "currency_converter"
 
 # Backend is the source of truth for which currencies the Currency
 # Converter exposes to Flutter — deliberately a curated subset of
-# utils.CURRENCIES (the wider set other Tools accept), not the full
+# utils.CURRENCIES (the wider set subscriptions/profile/preferences
+# accept), not the full
 # Frankfurter currency list. Flutter maps each code to a presentation
 # flag itself; the backend only returns code + name.
 CURRENCY_NAMES = {

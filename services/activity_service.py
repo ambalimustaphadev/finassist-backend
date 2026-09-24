@@ -13,13 +13,12 @@ INTERNAL_TYPES = {
     "preferences_updated",
 }
 
-# Types the client itself may log directly (calculators run entirely on
-# the frontend, so the backend has no other way to know they happened).
+# Types the client itself may log directly. The currency convert
+# endpoint doesn't write activity itself, so the app logs a completed
+# conversion here. Historical rows of any older type stay readable —
+# only new writes are restricted to this set.
 CLIENT_LOGGABLE_TYPES = {
     "currency_conversion",
-    "loan_calculation",
-    "savings_calculation",
-    "affordability_calculation",
 }
 
 ALL_TYPES = INTERNAL_TYPES | CLIENT_LOGGABLE_TYPES
@@ -39,7 +38,7 @@ def log_activity(user_id, type_, title, description=None, metadata=None):
 
 def record_client_activity(user_id, type_, title, description=None, metadata=None):
     """Logs and commits an activity reported directly by the client
-    (a calculator that runs entirely in the app, etc). Only the
+    (a completed currency conversion, etc). Only the
     client-loggable types are accepted, so this can never be used to
     forge a server-side event like `goal_created`."""
     if type_ not in CLIENT_LOGGABLE_TYPES:

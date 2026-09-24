@@ -27,11 +27,11 @@ class _FakeOpenAIClient:
 def _valid_tool_context(**overrides):
     context = {
         "type": "financial_tool_result",
-        "tool": "loan_calculator",
+        "tool": "currency_converter",
         "version": "1",
-        "inputs": {"loan_amount": "1000000", "annual_interest_rate": "18"},
-        "result": {"periodic_payment": "91679.99", "total_interest": "100159.91"},
-        "metadata": {"currency": "NGN", "is_estimate": True},
+        "inputs": {"amount": "500000.00", "from_currency": "NGN", "to_currency": "USD"},
+        "result": {"rate": "0.000650", "converted_amount": "325.00"},
+        "metadata": {"rate_date": "2026-09-22", "source": "frankfurter"},
     }
     context.update(overrides)
     return context
@@ -47,7 +47,7 @@ def test_tool_context_accepted_with_message(client, auth_headers, monkeypatch):
     conversation_id = _new_conversation(client, auth_headers)
 
     response = client.post("/api/chat", headers=auth_headers, json={
-        "message": "Is this affordable for me?",
+        "message": "Is this a good rate?",
         "conversation_id": conversation_id,
         "tool_context": _valid_tool_context(),
     })
@@ -55,10 +55,10 @@ def test_tool_context_accepted_with_message(client, auth_headers, monkeypatch):
 
     sent_content = fake_openai.responses.calls[-1]["input"][-1]["content"]
     assert isinstance(sent_content, list)
-    assert sent_content[0] == {"type": "input_text", "text": "Is this affordable for me?"}
+    assert sent_content[0] == {"type": "input_text", "text": "Is this a good rate?"}
     tool_block = sent_content[1]["text"]
-    assert "loan_calculator" in tool_block
-    assert "91679.99" in tool_block
+    assert "currency_converter" in tool_block
+    assert "325.00" in tool_block
     assert "do not recalculate" in tool_block.lower()
 
 
@@ -106,7 +106,7 @@ def test_historical_tool_context_not_resent_on_later_turns(client, auth_headers,
         "tool_context": _valid_tool_context(),
     })
     client.post("/api/chat", headers=auth_headers, json={
-        "message": "What about extra payments?",
+        "message": "What about converting to EUR?",
         "conversation_id": conversation_id,
     })
 
@@ -114,9 +114,9 @@ def test_historical_tool_context_not_resent_on_later_turns(client, auth_headers,
     # The first (historical) user turn should now be a placeholder, not
     # the raw structured tool_context JSON.
     first_turn_content = second_call_input[0]["content"]
-    assert "loan_calculator" in first_turn_content
+    assert "currency_converter" in first_turn_content
     assert '"result"' not in first_turn_content
-    assert '"periodic_payment"' not in first_turn_content
+    assert '"converted_amount"' not in first_turn_content
 
 
 def test_malformed_tool_context_missing_type_rejected(client, auth_headers, monkeypatch):
@@ -192,12 +192,12 @@ def test_tool_identifier_and_version_reach_ai_layer(client, auth_headers, monkey
     client.post("/api/chat", headers=auth_headers, json={
         "message": "",
         "conversation_id": conversation_id,
-        "tool_context": _valid_tool_context(tool="affordability_calculator", version="1"),
+        "tool_context": _valid_tool_context(tool="currency_converter", version="1"),
     })
 
     sent_content = fake_openai.responses.calls[-1]["input"][-1]["content"]
     tool_block = sent_content[1]["text"]
-    assert '"tool": "affordability_calculator"' in tool_block
+    assert '"tool": "currency_converter"' in tool_block
     assert '"version": "1"' in tool_block
 
 
@@ -208,11 +208,11 @@ def test_conversation_title_reflects_tool_when_no_message(client, auth_headers, 
     client.post("/api/chat", headers=auth_headers, json={
         "message": "",
         "conversation_id": conversation_id,
-        "tool_context": _valid_tool_context(tool="loan_calculator"),
+        "tool_context": _valid_tool_context(tool="currency_converter"),
     })
 
     conversation = client.get(f"/api/conversations/{conversation_id}", headers=auth_headers).get_json()
-    assert conversation["conversation"]["title"] == "Loan Calculator Result"
+    assert conversation["conversation"]["title"] == "Currency Converter Result"
 
 
 def test_normal_message_without_tool_context_unaffected(client, auth_headers, monkeypatch):

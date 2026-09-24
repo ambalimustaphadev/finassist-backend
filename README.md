@@ -28,9 +28,8 @@ reading whatever the user uploads or types, not by app-managed financial records
   client-logged calculator usage)
 - Notifications
 - Subscription tracking (recurring costs the user logs manually)
-- Tools: seven deterministic financial calculators (currency conversion, loan, savings,
-  affordability, debt payoff, investment growth, subscription cost totals), computed
-  server-side with `Decimal` precision; a result can be handed to AI chat for explanation
+- Tools: a deterministic Currency Converter, computed server-side with `Decimal`
+  precision; a result can be handed to AI chat for explanation
   via an optional `tool_context` on `POST /api/chat`, without the AI recalculating it
 
 ## Project Structure
@@ -49,8 +48,7 @@ preference_routes.py
 activity_routes.py
 notification_routes.py
 subscription_routes.py
-tools_routes.py       Tools API routes (currency, loan, savings, affordability, debt
-                       payoff, investment, subscription cost)
+tools_routes.py       Tools API routes (currency converter)
 models.py             Database models
 utils.py              Shared validation/error/pagination helpers for the routes above
 spaces.py             Cloudflare R2 client
@@ -131,7 +129,7 @@ Real events only — nothing here is synthesized to fill out the UI.
 |---|---|---|
 | GET | `/api/activity` | `?page=&per_page=` |
 | GET | `/api/activity/<id>` | |
-| POST | `/api/activity` | Only for events the backend has no other way to observe: `currency_conversion, loan_calculation, savings_calculation, affordability_calculation` (client-side calculator usage). Everything else (`profile_updated`, `preferences_updated`, `document_uploaded`, `document_deleted`) is logged automatically by the relevant service. |
+| POST | `/api/activity` | Only for events the backend has no other way to observe: `currency_conversion` (client-side calculator usage). Everything else (`profile_updated`, `preferences_updated`, `document_uploaded`, `document_deleted`) is logged automatically by the relevant service. |
 
 ### Notifications
 
@@ -176,18 +174,12 @@ backend resolves that to a short-lived signed URL on demand, either for `GET
 
 ### Tools
 
-Seven deterministic calculators — see `DOCUMENT.md`'s Tools API section for full request/response contracts. Every response shares one envelope: `{"tool", "version", "inputs", "result", "metadata"}`. Money is `Decimal`-precise throughout and rendered as strings, never JSON floats.
+The deterministic Currency Converter — see `DOCUMENT.md`'s Tools API section for the full request/response contract. Responses use one envelope: `{"tool", "version", "inputs", "result", "metadata"}`. Money is `Decimal`-precise throughout and rendered as strings, never JSON floats.
 
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/tools/currency/currencies` | Backend-owned currency list (code + name) |
 | POST | `/api/tools/currency/convert` | `amount, from_currency, to_currency`. Same-currency short-circuits the exchange rate provider. Rates come from Frankfurter (keyless) behind a `CurrencyRateProvider` interface (`services/tools/currency/providers/`), swappable without touching this contract. |
-| POST | `/api/tools/loan/calculate` | `loan_amount, annual_interest_rate, duration, duration_unit, repayment_frequency, currency` — standard amortizing loan |
-| POST | `/api/tools/savings/calculate` | Exactly one of `target_amount` / `monthly_contribution`, plus `duration_months`, optional `annual_return_rate` |
-| POST | `/api/tools/affordability/calculate` | `monthly_income, existing_commitments, purchase_price, payment_method (cash\|installment), duration_months?, currency` |
-| POST | `/api/tools/debt-payoff/calculate` | `current_debt, annual_interest_rate, minimum_monthly_payment, extra_monthly_payment?, currency`. Rejects a payment that can't cover the debt's interest (`DEBT_PAYMENT_TOO_LOW`). |
-| POST | `/api/tools/investment/calculate` | `initial_amount, monthly_contribution?, expected_annual_return, duration_years, compounding_frequency, currency` |
-| POST | `/api/tools/subscription-cost/calculate` | Optional `subscription_ids`; defaults to all of the caller's `active` subscriptions. Uses stored `Subscription` amounts only — never a client-supplied amount. Ownership-checked (404 on another user's id). |
 
 ### Conversations & Chat
 

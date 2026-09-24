@@ -1,6 +1,6 @@
-"""Shared building blocks for the deterministic Tools calculators
-(currency, loan, savings, affordability, debt payoff, investment,
-subscription cost).
+"""Shared building blocks for the deterministic Tools (the currency
+converter, and the subscription-cost totals behind the
+`get_monthly_spend` AI tool).
 
 Every tool's service module builds its response through
 `build_tool_result` so the JSON envelope Flutter and the chat handoff
@@ -12,7 +12,7 @@ float on the wire.
 from datetime import datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
-from utils import CURRENCIES, ValidationError
+from utils import ValidationError
 
 TOOL_VERSION = "1"
 
@@ -46,17 +46,6 @@ def decimal_str(value, places=2):
     return format(quantize(value, places), f".{places}f")
 
 
-def require_currency_code(value, field_name="currency", code="INVALID_CURRENCY"):
-    if not isinstance(value, str) or not value.strip():
-        raise ValidationError(f"{field_name} is required.", {field_name: code})
-    normalized = value.strip().upper()
-    if normalized not in CURRENCIES:
-        raise ValidationError(
-            f"'{value}' is not a supported currency code.", {field_name: code}
-        )
-    return normalized
-
-
 def require_decimal(
     value,
     field_name,
@@ -87,29 +76,3 @@ def require_decimal(
         )
     return number
 
-
-def require_positive_int(value, field_name, code="INVALID_DURATION"):
-    if isinstance(value, bool):
-        raise ValidationError(f"{field_name} must be a whole number.", {field_name: code})
-    if isinstance(value, float):
-        if not value.is_integer():
-            raise ValidationError(
-                f"{field_name} must be a whole number.", {field_name: code}
-            )
-        value = int(value)
-    if not isinstance(value, int):
-        raise ValidationError(f"{field_name} must be a whole number.", {field_name: code})
-    if value <= 0:
-        raise ValidationError(
-            f"{field_name} must be greater than zero.", {field_name: code}
-        )
-    return value
-
-
-def require_choice(value, allowed, field_name, code):
-    if value not in allowed:
-        raise ValidationError(
-            f"'{value}' is not a valid value for {field_name}.",
-            {field_name: code},
-        )
-    return value

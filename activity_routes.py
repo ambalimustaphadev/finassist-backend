@@ -64,7 +64,7 @@ def get_activity(activity_id):
 @jwt_required()
 def post_activity():
     """Lets the client log activity the backend has no other way to
-    observe, such as a calculator that runs entirely in the app. Only
+    observe, such as a completed currency conversion. Only
     the client-loggable types are accepted, so this can never be used to
     forge server-side events like `goal_created`."""
     user_id = current_user_id()

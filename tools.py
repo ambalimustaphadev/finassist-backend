@@ -55,6 +55,27 @@ _MAX_ARGUMENTS_BYTES = 10_000
 # backend calls; using the nested shape here would silently fail to
 # register any tools.
 
+# Canonical stored values (services.subscription_service.CATEGORIES).
+# cloud_storage / news_media are what the app displays as
+# "Cloud & Storage" / "News & Media".
+_SUBSCRIPTION_CATEGORY_VALUES = [
+    "entertainment", "software", "cloud_storage", "education", "fitness",
+    "news_media", "productivity", "shopping", "gaming", "other",
+]
+
+_SUBSCRIPTION_CATEGORY_PARAM = {
+    "type": "string",
+    "enum": _SUBSCRIPTION_CATEGORY_VALUES,
+    "description": (
+        "Subscription category. If the user names one, map it to the closest "
+        "value (e.g. 'music'/'streaming' -> entertainment, 'cloud storage' -> "
+        "cloud_storage, 'news' -> news_media, 'SaaS' -> software). If they "
+        "don't, infer it from the service when it's clear (Netflix -> "
+        "entertainment, ChatGPT -> software, Google One -> cloud_storage); "
+        "otherwise omit it. Never override a category the user stated."
+    ),
+}
+
 _SUBSCRIPTION_ID_PARAM = {
     "type": "integer",
     "description": "The numeric id of the subscription, as returned by a previous subscription tool call.",
@@ -203,6 +224,7 @@ TOOLS: list[dict[str, Any]] = [
                     "enum": ["weekly", "monthly", "yearly"],
                     "description": "How often the subscription renews. Optional — defaults to 'monthly' if not stated.",
                 },
+                "category": _SUBSCRIPTION_CATEGORY_PARAM,
             },
             "required": ["service_name", "price", "renewal_date"],
             "additionalProperties": False,
@@ -235,6 +257,7 @@ TOOLS: list[dict[str, Any]] = [
                     "enum": ["weekly", "monthly", "yearly"],
                     "description": "New billing cadence.",
                 },
+                "category": _SUBSCRIPTION_CATEGORY_PARAM,
             },
             "required": ["subscription_id"],
             "additionalProperties": False,
